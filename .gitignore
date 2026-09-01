@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Generated analysis output (large, reproducible via analysis/generate.mjs)
+analysis/data/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

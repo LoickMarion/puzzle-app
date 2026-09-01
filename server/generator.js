@@ -5,7 +5,7 @@ const MAX_SIDE = 10
 const MIN_AREA = 35
 const MAX_AREA = 50
 
-const POISSON_LAMBDA = 1.25
+const POISSON_LAMBDA = 1.2
 const MIN_PIECE_SIZE = 4
 
 const MAX_BOX = 5
@@ -38,13 +38,29 @@ function weightedPick(rng, items, weightOf) {
   return items[items.length - 1]
 }
 
-function pickBoardSize(rng) {
-  while (true) {
-    const height = randInt(rng, MIN_SIDE, MAX_SIDE)
-    const width = randInt(rng, MIN_SIDE, MAX_SIDE)
-    const area = height * width
-    if (area >= MIN_AREA && area <= MAX_AREA) return { height, width, area }
+// All unordered (side, side) pairs that satisfy the size/area constraints,
+// computed once. Picking uniformly from this list - rather than rejection-
+// sampling width/height independently - gives every distinct board *shape*
+// equal odds; a square would otherwise land half as often as a non-square
+// size, since a non-square size has two ordered orientations feeding into it
+// and a square only has one. A separate coin flip then picks orientation.
+const VALID_SIZE_PAIRS = (() => {
+  const pairs = []
+  for (let a = MIN_SIDE; a <= MAX_SIDE; a++) {
+    for (let b = a; b <= MAX_SIDE; b++) {
+      const area = a * b
+      if (area >= MIN_AREA && area <= MAX_AREA) pairs.push([a, b])
+    }
   }
+  return pairs
+})()
+
+function pickBoardSize(rng) {
+  const [a, b] = VALID_SIZE_PAIRS[Math.floor(rng() * VALID_SIZE_PAIRS.length)]
+  const rotated = rng() < 0.5
+  const width = rotated ? b : a
+  const height = rotated ? a : b
+  return { width, height, area: width * height }
 }
 
 function samplePoisson(rng, lambda) {
