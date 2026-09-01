@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
+import { getFoundCount, recordSolution } from '../lib/foundSolutions'
 import {
-  BOARD_SIZE,
-  GRID_SIZE,
-  MARGIN,
   clampCoord,
-  createShuffledPieces,
   evaluateBoard,
   getCellEdges,
+  getSolutionFingerprint,
   relativeLuminance,
   rotateCCW,
   rotateCW,
@@ -17,10 +15,42 @@ import Controls from './Controls'
 const MIN_CELL = 14
 const MAX_CELL = 46
 
-export default function PuzzleGame() {
-  const [pieces, setPieces] = useState<PieceState[]>(() => createShuffledPieces())
+interface PuzzleBoardProps {
+  boardWidth: number
+  boardHeight: number
+  margin: number
+  title: string
+  subtitle: string
+  resetLabel: string
+  createInitialPieces: () => PieceState[]
+  onReset: () => PieceState[]
+  // Classic-only "distinct solutions found" collection feature - only makes
+  // sense against a fixed, stable piece set, so Daily's generated puzzles
+  // just get a plain "solved" banner instead.
+  trackSolutions?: boolean
+}
+
+export default function PuzzleBoard({
+  boardWidth,
+  boardHeight,
+  margin,
+  title,
+  subtitle,
+  resetLabel,
+  createInitialPieces,
+  onReset,
+  trackSolutions = false,
+}: PuzzleBoardProps) {
+  const [pieces, setPieces] = useState<PieceState[]>(createInitialPieces)
   const [selectedId, setSelectedId] = useState<number | null>(null)
   const [cellSize, setCellSize] = useState(0)
+
+  const gridWidth = boardWidth + margin * 2
+  const gridHeight = boardHeight + margin * 2
+  const minX = -margin
+  const maxX = boardWidth - 1 + margin
+  const minY = -margin
+  const maxY = boardHeight - 1 + margin
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Mirrors `cellSize` for the drag listeners below, which are set up once per
@@ -37,22 +67,44 @@ export default function PuzzleGame() {
       const entry = entries[0]
       if (!entry) return
       const { width, height } = entry.contentRect
-      const size = Math.floor(Math.min(width, height) / GRID_SIZE)
+      const size = Math.floor(Math.min(width / gridWidth, height / gridHeight))
       setCellSize(Math.max(MIN_CELL, Math.min(MAX_CELL, size)))
     })
     observer.observe(el)
     return () => observer.disconnect()
-  }, [])
+  }, [gridWidth, gridHeight])
 
-  const { occupancy, overflowIds, solved } = evaluateBoard(pieces)
+  const { occupancy, overflowIds, solved } = evaluateBoard(pieces, boardWidth, boardHeight)
 
-  const movePiece = useCallback((id: number, dx: number, dy: number) => {
-    setPieces((prev) =>
-      prev.map((p) =>
-        p.id === id ? { ...p, x: clampCoord(p.x + dx), y: clampCoord(p.y + dy) } : p,
-      ),
-    )
-  }, [])
+  const [foundCount, setFoundCount] = useState(() => (trackSolutions ? getFoundCount() : 0))
+  const [solveInfo, setSolveInfo] = useState<{ isNew: boolean; total: number } | null>(null)
+  const wasSolvedRef = useRef(false)
+
+  useEffect(() => {
+    if (solved && !wasSolvedRef.current) {
+      const result = trackSolutions
+        ? recordSolution(getSolutionFingerprint(pieces, boardWidth))
+        : { isNew: true, total: 0 }
+      setSolveInfo(result)
+      setFoundCount(result.total)
+    } else if (!solved && wasSolvedRef.current) {
+      setSolveInfo(null)
+    }
+    wasSolvedRef.current = solved
+  }, [solved, pieces, trackSolutions, boardWidth])
+
+  const movePiece = useCallback(
+    (id: number, dx: number, dy: number) => {
+      setPieces((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? { ...p, x: clampCoord(p.x + dx, minX, maxX), y: clampCoord(p.y + dy, minY, maxY) }
+            : p,
+        ),
+      )
+    },
+    [minX, maxX, minY, maxY],
+  )
 
   const rotatePiece = useCallback((id: number, direction: 'cw' | 'ccw') => {
     setPieces((prev) =>
@@ -62,10 +114,10 @@ export default function PuzzleGame() {
     )
   }, [])
 
-  const shuffle = useCallback(() => {
-    setPieces(createShuffledPieces())
+  const reset = useCallback(() => {
+    setPieces(onReset())
     setSelectedId(null)
-  }, [])
+  }, [onReset])
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -129,8 +181,8 @@ export default function PuzzleGame() {
         if (!size) return
         const dx = Math.round((ev.clientX - startClientX) / size)
         const dy = Math.round((ev.clientY - startClientY) / size)
-        const nextX = clampCoord(originX + dx)
-        const nextY = clampCoord(originY + dy)
+        const nextX = clampCoord(originX + dx, minX, maxX)
+        const nextY = clampCoord(originY + dy, minY, maxY)
         setPieces((prev) =>
           prev.map((p) =>
             p.id === piece.id && (p.x !== nextX || p.y !== nextY) ? { ...p, x: nextX, y: nextY } : p,
@@ -149,56 +201,66 @@ export default function PuzzleGame() {
       window.addEventListener('pointerup', onUp)
       window.addEventListener('pointercancel', onUp)
     },
-    [],
+    [minX, maxX, minY, maxY],
   )
 
   const selectedPiece = pieces.find((p) => p.id === selectedId) ?? null
-  const canvasSize = cellSize * GRID_SIZE
+  const canvasWidth = cellSize * gridWidth
+  const canvasHeight = cellSize * gridHeight
 
   return (
-    <div className="flex h-dvh flex-col bg-neutral-950 text-neutral-100">
+    <div className="flex h-full flex-col bg-neutral-50 text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       <header className="flex items-center justify-between gap-3 px-4 py-3">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">Polyomino Puzzle</h1>
-          <p className="text-xs text-neutral-400">
-            Drag every piece onto the board so it's fully covered with no overlaps.
-          </p>
+          <h1 className="text-lg font-semibold tracking-tight">{title}</h1>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400">{subtitle}</p>
         </div>
-        <button
-          type="button"
-          onClick={shuffle}
-          className="shrink-0 rounded-lg bg-neutral-800 px-3 py-2 text-sm font-medium text-neutral-100 active:bg-neutral-700"
-        >
-          New puzzle
-        </button>
+        <div className="flex shrink-0 items-center gap-3">
+          {trackSolutions && (
+            <span className="text-sm text-neutral-500 dark:text-neutral-400">
+              Solutions found: <span className="font-semibold text-neutral-900 dark:text-neutral-100">{foundCount}</span>
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={reset}
+            className="rounded-lg bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-900 active:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-100 dark:active:bg-neutral-700"
+          >
+            {resetLabel}
+          </button>
+        </div>
       </header>
 
       <main
         ref={containerRef}
-        className="relative flex flex-1 items-center justify-center overflow-hidden bg-neutral-900 px-2"
+        className="relative flex flex-1 items-center justify-center overflow-hidden bg-neutral-100 px-2 dark:bg-neutral-900"
         onPointerDown={() => setSelectedId(null)}
       >
-        {solved && (
+        {solveInfo && (
           <div className="absolute top-3 z-30 rounded-full bg-emerald-500 px-4 py-1.5 text-sm font-semibold text-emerald-950 shadow-lg">
-            🎉 Solved!
+            {trackSolutions
+              ? solveInfo.isNew
+                ? `🎉 New solution! (${solveInfo.total} found)`
+                : "✅ Solved — you've found this one before"
+              : '🎉 Solved!'}
           </div>
         )}
 
         {cellSize > 0 && (
-          <div className="relative touch-none select-none" style={{ width: canvasSize, height: canvasSize }}>
+          <div className="relative touch-none select-none" style={{ width: canvasWidth, height: canvasHeight }}>
             <div
               className="absolute grid overflow-hidden rounded-md shadow-[0_0_0_3px_rgba(0,0,0,0.4)] ring-2 ring-slate-400"
               style={{
-                left: MARGIN * cellSize,
-                top: MARGIN * cellSize,
-                width: BOARD_SIZE * cellSize,
-                height: BOARD_SIZE * cellSize,
+                left: margin * cellSize,
+                top: margin * cellSize,
+                width: boardWidth * cellSize,
+                height: boardHeight * cellSize,
                 // A shared CSS Grid (rather than each cell absolutely positioned and
                 // sized on its own) keeps every boundary pixel-aligned even under
                 // fractional display scaling - independently-rounded absolute boxes
                 // can end up a physical pixel off from their neighbors.
-                gridTemplateColumns: `repeat(${BOARD_SIZE}, ${cellSize}px)`,
-                gridTemplateRows: `repeat(${BOARD_SIZE}, ${cellSize}px)`,
+                gridTemplateColumns: `repeat(${boardWidth}, ${cellSize}px)`,
+                gridTemplateRows: `repeat(${boardHeight}, ${cellSize}px)`,
               }}
             >
               {occupancy.map((row, y) =>
@@ -223,17 +285,19 @@ export default function PuzzleGame() {
                     ? 'rgba(0,0,0,0.6)'
                     : 'rgba(255,255,255,0.7)'
               const borderWidth = isSelected ? 3 : 2
+              const pieceRows = piece.shape.length
+              const pieceCols = piece.shape[0].length
               return (
                 <div
                   key={piece.id}
                   className="absolute grid"
                   style={{
-                    left: (piece.x + MARGIN) * cellSize,
-                    top: (piece.y + MARGIN) * cellSize,
-                    width: cellSize * 4,
-                    height: cellSize * 4,
-                    gridTemplateColumns: `repeat(4, ${cellSize}px)`,
-                    gridTemplateRows: `repeat(4, ${cellSize}px)`,
+                    left: (piece.x + margin) * cellSize,
+                    top: (piece.y + margin) * cellSize,
+                    width: cellSize * pieceCols,
+                    height: cellSize * pieceRows,
+                    gridTemplateColumns: `repeat(${pieceCols}, ${cellSize}px)`,
+                    gridTemplateRows: `repeat(${pieceRows}, ${cellSize}px)`,
                     zIndex: isSelected ? 20 : 10,
                     pointerEvents: 'none',
                   }}
@@ -272,12 +336,12 @@ export default function PuzzleGame() {
             <div
               className="pointer-events-none absolute grid"
               style={{
-                left: MARGIN * cellSize,
-                top: MARGIN * cellSize,
-                width: BOARD_SIZE * cellSize,
-                height: BOARD_SIZE * cellSize,
-                gridTemplateColumns: `repeat(${BOARD_SIZE}, ${cellSize}px)`,
-                gridTemplateRows: `repeat(${BOARD_SIZE}, ${cellSize}px)`,
+                left: margin * cellSize,
+                top: margin * cellSize,
+                width: boardWidth * cellSize,
+                height: boardHeight * cellSize,
+                gridTemplateColumns: `repeat(${boardWidth}, ${cellSize}px)`,
+                gridTemplateRows: `repeat(${boardHeight}, ${cellSize}px)`,
                 zIndex: 30,
               }}
             >

@@ -7,17 +7,17 @@ interface ControlsProps {
 }
 
 const buttonClass =
-  'flex h-11 w-11 items-center justify-center rounded-lg bg-neutral-800 text-xl font-bold text-neutral-100 disabled:opacity-30 active:bg-neutral-700'
+  'flex h-11 w-11 items-center justify-center rounded-lg bg-neutral-200 text-xl font-bold text-neutral-900 disabled:opacity-30 active:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-100 dark:active:bg-neutral-700'
 
 export default function Controls({ selectedPiece, onMove, onRotate }: ControlsProps) {
   const disabled = selectedPiece == null
 
   return (
     <footer
-      className="flex flex-wrap items-center justify-between gap-4 border-t border-neutral-800 bg-neutral-900/95 px-4 py-3"
+      className="flex flex-wrap items-center justify-between gap-4 border-t border-neutral-200 bg-neutral-50/95 px-4 py-3 dark:border-neutral-800 dark:bg-neutral-900/95"
       style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
     >
-      <div className="flex items-center gap-2 text-sm text-neutral-300">
+      <div className="flex items-center gap-2 text-sm text-neutral-600 dark:text-neutral-300">
         <span
           className="h-6 w-6 rounded ring-1 ring-white/20"
           style={{ backgroundColor: selectedPiece?.color ?? 'transparent' }}
