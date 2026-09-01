@@ -4,7 +4,7 @@ import {
   clampCoord,
   evaluateBoard,
   findClearPosition,
-  getCellEdges,
+  getPieceOutline,
   getSolutionFingerprint,
   maxPieceX,
   maxPieceY,
@@ -385,8 +385,6 @@ export default function PuzzleBoard({
                   {piece.shape.map((row, j) =>
                     row.map((filled, i) => {
                       if (!filled) return <div key={`${i}-${j}`} />
-                      const edges = getCellEdges(piece.shape, j, i)
-                      const side = (visible: boolean) => (visible ? `${borderWidth}px solid ${borderColor}` : 'none')
                       return (
                         <div
                           key={`${i}-${j}`}
@@ -399,25 +397,32 @@ export default function PuzzleBoard({
                           style={{
                             backgroundColor: piece.color,
                             pointerEvents: 'auto',
-                            boxSizing: 'border-box',
-                            // Without this, a grid item's implicit auto min-size
-                            // can keep it from shrinking below its own border
-                            // width, letting cells (and the border) bleed past
-                            // the intended box on a very constrained layout.
                             minWidth: 0,
                             minHeight: 0,
-                            // Borders only appear on a cell's true outer edges (no filled
-                            // neighbor on that side) so a piece reads as one solid shape
-                            // instead of a grid of separately-outlined tiles.
-                            borderTop: side(edges.top),
-                            borderRight: side(edges.right),
-                            borderBottom: side(edges.bottom),
-                            borderLeft: side(edges.left),
                           }}
                         />
                       )
                     }),
                   )}
+                  {/* One continuous outline, not a border per cell - SVG's default
+                      miter join extends both sides of every corner (concave or
+                      convex) until they meet, instead of patching gaps after the
+                      fact. Sits above the fill divs so the full stroke width shows
+                      even where it overlaps the piece's own color. */}
+                  <svg
+                    width={cellSize * pieceCols}
+                    height={cellSize * pieceRows}
+                    style={{ position: 'absolute', left: 0, top: 0, pointerEvents: 'none' }}
+                  >
+                    <polygon
+                      points={getPieceOutline(piece.shape)
+                        .map(({ row, col }) => `${col * cellSize},${row * cellSize}`)
+                        .join(' ')}
+                      fill="none"
+                      stroke={borderColor}
+                      strokeWidth={borderWidth}
+                    />
+                  </svg>
                 </div>
               )
             })}

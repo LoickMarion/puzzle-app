@@ -68,28 +68,57 @@ export function clampCoord(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value))
 }
 
-export interface CellEdges {
-  top: boolean
-  right: boolean
-  bottom: boolean
-  left: boolean
+export interface GridPoint {
+  row: number
+  col: number
 }
 
-// A cell's edge is part of the piece's true outline only when there's no filled
-// neighbor on that side - an edge shared with another filled cell of the same
-// piece isn't drawn, so the piece reads as one solid shape instead of a grid of
-// separately-outlined tiles.
-export function getCellEdges(shape: Shape, j: number, i: number): CellEdges {
+// The piece's true outline as a single closed loop of grid-corner points, in
+// clockwise order, ready to stroke as one SVG polygon. Drawing borders per
+// cell (independent straight sides) is what caused the concave-corner
+// problems - two unrelated cells' borders meeting edge-to-edge, or a patch
+// bolted on to cover the seam. Tracing one continuous line and letting SVG's
+// default miter join close each corner is the actual fix: every join, convex
+// or concave, is just the two adjoining sides extended until they meet - not
+// a special case, not a separate patch.
+//
+// Standard boundary-tracing technique: every filled cell contributes a
+// clockwise edge for each side that isn't shared with another filled cell
+// (shared - internal - edges are never emitted, so they can't appear twice
+// and cancel out). What's left is exactly the outer boundary, and chaining
+// each edge's end to the next edge's start walks it as one loop. Assumes the
+// shape is simply connected (true for every piece this app generates) - a
+// shape with a hole would need a second loop this doesn't handle.
+export function getPieceOutline(shape: Shape): GridPoint[] {
   const rows = shape.length
   const cols = shape[0].length
   const filledAt = (row: number, col: number) =>
     row >= 0 && row < rows && col >= 0 && col < cols && shape[row][col] === 1
-  return {
-    top: !filledAt(j - 1, i),
-    right: !filledAt(j, i + 1),
-    bottom: !filledAt(j + 1, i),
-    left: !filledAt(j, i - 1),
+
+  const key = (p: GridPoint) => `${p.row},${p.col}`
+  const nextFrom = new Map<string, GridPoint>()
+  const addEdge = (from: GridPoint, to: GridPoint) => nextFrom.set(key(from), to)
+
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      if (!filledAt(row, col)) continue
+      if (!filledAt(row - 1, col)) addEdge({ row, col }, { row, col: col + 1 }) // top
+      if (!filledAt(row, col + 1)) addEdge({ row, col: col + 1 }, { row: row + 1, col: col + 1 }) // right
+      if (!filledAt(row + 1, col)) addEdge({ row: row + 1, col: col + 1 }, { row: row + 1, col }) // bottom
+      if (!filledAt(row, col - 1)) addEdge({ row: row + 1, col }, { row, col }) // left
+    }
   }
+  if (nextFrom.size === 0) return []
+
+  const start = nextFrom.keys().next().value!
+  const [startRow, startCol] = start.split(',').map(Number)
+  const loop: GridPoint[] = [{ row: startRow, col: startCol }]
+  for (let i = 0; i < nextFrom.size; i++) {
+    const point = nextFrom.get(key(loop[loop.length - 1]))!
+    if (point.row === startRow && point.col === startCol) break
+    loop.push(point)
+  }
+  return loop
 }
 
 // Relative luminance of a #rrggbb color, used to pick a border tone that
