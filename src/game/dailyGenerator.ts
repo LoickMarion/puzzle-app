@@ -1,4 +1,4 @@
-import { mulberry32, seedFromString } from './rng.js'
+import { mulberry32, seedFromString } from './rng.ts'
 
 const MIN_SIDE = 5
 const MAX_SIDE = 10
@@ -24,11 +24,16 @@ const DIRS = [
   [0, 1],
 ]
 
-function randInt(rng, min, max) {
-  return min + Math.floor(rng() * (max - min + 1))
+type Cell = [number, number]
+type Rng = () => number
+
+export interface DailyPuzzle {
+  date: string
+  board: { width: number; height: number }
+  pieces: { id: number; color: string; cells: Cell[] }[]
 }
 
-function weightedPick(rng, items, weightOf) {
+function weightedPick<T>(rng: Rng, items: T[], weightOf: (item: T) => number): T {
   const total = items.reduce((sum, item) => sum + weightOf(item), 0)
   let r = rng() * total
   for (const item of items) {
@@ -44,8 +49,8 @@ function weightedPick(rng, items, weightOf) {
 // equal odds; a square would otherwise land half as often as a non-square
 // size, since a non-square size has two ordered orientations feeding into it
 // and a square only has one. A separate coin flip then picks orientation.
-const VALID_SIZE_PAIRS = (() => {
-  const pairs = []
+const VALID_SIZE_PAIRS: [number, number][] = (() => {
+  const pairs: [number, number][] = []
   for (let a = MIN_SIDE; a <= MAX_SIDE; a++) {
     for (let b = a; b <= MAX_SIDE; b++) {
       const area = a * b
@@ -55,7 +60,7 @@ const VALID_SIZE_PAIRS = (() => {
   return pairs
 })()
 
-function pickBoardSize(rng) {
+function pickBoardSize(rng: Rng): { width: number; height: number; area: number } {
   const [a, b] = VALID_SIZE_PAIRS[Math.floor(rng() * VALID_SIZE_PAIRS.length)]
   const rotated = rng() < 0.5
   const width = rotated ? b : a
@@ -63,7 +68,7 @@ function pickBoardSize(rng) {
   return { width, height, area: width * height }
 }
 
-function samplePoisson(rng, lambda) {
+function samplePoisson(rng: Rng, lambda: number): number {
   const limit = Math.exp(-lambda)
   let k = 0
   let p = 1
@@ -74,9 +79,9 @@ function samplePoisson(rng, lambda) {
   return k - 1
 }
 
-function samplePieceSizes(rng, area) {
+function samplePieceSizes(rng: Rng, area: number): number[] {
   let remaining = area
-  const sizes = []
+  const sizes: number[] = []
   while (remaining > 0) {
     if (remaining <= MIN_PIECE_SIZE) {
       sizes.push(remaining)
@@ -90,15 +95,15 @@ function samplePieceSizes(rng, area) {
   return sizes
 }
 
-function cellKey(row, col) {
+function cellKey(row: number, col: number): number {
   return row * 100 + col
 }
 
-function floodFillSize(grid, height, width, startRow, startCol) {
+function floodFillSize(grid: number[][], height: number, width: number, startRow: number, startCol: number): number {
   const seen = new Set([cellKey(startRow, startCol)])
-  const stack = [[startRow, startCol]]
+  const stack: Cell[] = [[startRow, startCol]]
   while (stack.length) {
-    const [row, col] = stack.pop()
+    const [row, col] = stack.pop()!
     for (const [dr, dc] of DIRS) {
       const nr = row + dr
       const nc = col + dc
@@ -120,16 +125,23 @@ function floodFillSize(grid, height, width, startRow, startCol) {
 // single-threaded random walk. The bounding box is hard-capped at 5x5, and
 // once it exceeds 3x3, candidates that would expand it further are
 // weighted down so pieces stay compact rather than snaking outward.
-function growPiece(rng, grid, height, width, seed, targetSize) {
-  const cells = [seed]
+function growPiece(
+  rng: Rng,
+  grid: number[][],
+  height: number,
+  width: number,
+  seed: Cell,
+  targetSize: number,
+): Cell[] | null {
+  const cells: Cell[] = [seed]
   const inPiece = new Set([cellKey(seed[0], seed[1])])
-  const frontier = new Set()
+  const frontier = new Set<number>()
   let minRow = seed[0]
   let maxRow = seed[0]
   let minCol = seed[1]
   let maxCol = seed[1]
 
-  const addFrontier = (row, col) => {
+  const addFrontier = (row: number, col: number) => {
     for (const [dr, dc] of DIRS) {
       const nr = row + dr
       const nc = col + dc
@@ -148,7 +160,16 @@ function growPiece(rng, grid, height, width, seed, targetSize) {
     const curWidth = maxCol - minCol + 1
     const biasActive = Math.max(curHeight, curWidth) > EXPAND_BIAS_THRESHOLD
 
-    const candidates = []
+    const candidates: {
+      key: number
+      row: number
+      col: number
+      newMinRow: number
+      newMaxRow: number
+      newMinCol: number
+      newMaxCol: number
+      weight: number
+    }[] = []
     for (const k of frontier) {
       const row = Math.floor(k / 100)
       const col = k % 100
@@ -179,18 +200,18 @@ function growPiece(rng, grid, height, width, seed, targetSize) {
   return cells
 }
 
-function normalizeShape(cells) {
+function normalizeShape(cells: Cell[]): Cell[] {
   const minRow = Math.min(...cells.map((p) => p[0]))
   const minCol = Math.min(...cells.map((p) => p[1]))
-  return cells.map(([r, c]) => [r - minRow, c - minCol]).sort((a, b) => a[0] - b[0] || a[1] - b[1])
+  return cells.map(([r, c]): Cell => [r - minRow, c - minCol]).sort((a, b) => a[0] - b[0] || a[1] - b[1])
 }
 
-function rotateCells90(cells) {
+function rotateCells90(cells: Cell[]): Cell[] {
   const maxRow = Math.max(...cells.map((p) => p[0]))
-  return normalizeShape(cells.map(([r, c]) => [c, maxRow - r]))
+  return normalizeShape(cells.map(([r, c]): Cell => [c, maxRow - r]))
 }
 
-function shapeKey(cells) {
+function shapeKey(cells: Cell[]): string {
   return normalizeShape(cells)
     .map(([r, c]) => `${r}:${c}`)
     .join('|')
@@ -198,9 +219,9 @@ function shapeKey(cells) {
 
 // Canonical form under rotation only (no reflections), so a piece and any of
 // its 4 rotations map to the same key for the duplicate-shape check.
-function canonicalShapeKey(cells) {
+function canonicalShapeKey(cells: Cell[]): string {
   let variant = cells
-  const keys = []
+  const keys: string[] = []
   for (let i = 0; i < 4; i++) {
     keys.push(shapeKey(variant))
     variant = rotateCells90(variant)
@@ -209,13 +230,7 @@ function canonicalShapeKey(cells) {
   return keys[0]
 }
 
-function boundingBox(cells) {
-  const rows = cells.map((p) => p[0])
-  const cols = cells.map((p) => p[1])
-  return { height: Math.max(...rows) - Math.min(...rows) + 1, width: Math.max(...cols) - Math.min(...cols) + 1 }
-}
-
-function firstEmptyCell(grid, height, width) {
+function firstEmptyCell(grid: number[][], height: number, width: number): Cell | null {
   for (let r = 0; r < height; r++) {
     for (let c = 0; c < width; c++) {
       if (grid[r][c] === -1) return [r, c]
@@ -224,18 +239,24 @@ function firstEmptyCell(grid, height, width) {
   return null
 }
 
+interface PlacedPiece {
+  id: number
+  size: number
+  cells: Cell[]
+}
+
 // Backtracking placer: always grows the next piece to cover the first
 // (row-major) empty cell, restricting candidate sizes to ones that fit that
 // cell's connected empty region. On failure it undoes the most recent
 // placement and tries the next alternative, bounded by a call budget.
-function generateLayout(rng, height, width, sizes) {
-  const grid = Array.from({ length: height }, () => Array(width).fill(-1))
+function generateLayout(rng: Rng, height: number, width: number, sizes: number[]): PlacedPiece[] | null {
+  const grid: number[][] = Array.from({ length: height }, () => Array(width).fill(-1))
   const remainingSizes = sizes.slice()
-  const placed = []
-  const usedShapeKeys = new Map()
+  const placed: PlacedPiece[] = []
+  const usedShapeKeys = new Map<string, number>()
   const budget = { calls: BACKTRACK_CALL_BUDGET }
 
-  function place(size4DupUsed) {
+  function place(size4DupUsed: boolean): boolean {
     if (budget.calls-- <= 0) return false
     if (remainingSizes.length === 0) return true
 
@@ -249,7 +270,7 @@ function generateLayout(rng, height, width, sizes) {
     if (candidateSizes.length === 0) return false
 
     for (const size of candidateSizes) {
-      const triedShapes = new Set()
+      const triedShapes = new Set<string>()
       for (let attempt = 0; attempt < SHAPE_ATTEMPTS_PER_SIZE; attempt++) {
         const cells = growPiece(rng, grid, height, width, empty, size)
         if (!cells) continue
@@ -292,10 +313,10 @@ function generateLayout(rng, height, width, sizes) {
 
 // Evenly spaced hues (golden-angle spacing) stay visually distinct no matter
 // how many pieces a given puzzle has, unlike a small fixed color pool.
-function assignColors(rng, count) {
+function assignColors(rng: Rng, count: number): string[] {
   const GOLDEN_ANGLE = 137.508
   const startHue = rng() * 360
-  const colors = []
+  const colors: string[] = []
   for (let i = 0; i < count; i++) {
     const hue = (startHue + i * GOLDEN_ANGLE) % 360
     colors.push(hslToHex(hue, 65, 55))
@@ -303,20 +324,20 @@ function assignColors(rng, count) {
   return colors
 }
 
-function hslToHex(h, s, l) {
+function hslToHex(h: number, s: number, l: number): string {
   s /= 100
   l /= 100
-  const k = (n) => (n + h / 30) % 12
+  const k = (n: number) => (n + h / 30) % 12
   const a = s * Math.min(l, 1 - l)
-  const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
-  const toHex = (n) =>
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)))
+  const toHex = (n: number) =>
     Math.round(255 * f(n))
       .toString(16)
       .padStart(2, '0')
   return `#${toHex(0)}${toHex(8)}${toHex(4)}`
 }
 
-export function generateDailyPuzzle(dateString) {
+export function generateDailyPuzzle(dateString: string): DailyPuzzle {
   const rng = mulberry32(seedFromString(dateString))
 
   for (let attempt = 0; attempt < MAX_WHOLE_BOARD_RETRIES; attempt++) {
@@ -335,5 +356,3 @@ export function generateDailyPuzzle(dateString) {
 
   throw new Error(`Could not generate a puzzle for ${dateString} within retry budget`)
 }
-
-export { boundingBox }

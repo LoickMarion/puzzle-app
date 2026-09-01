@@ -1,10 +1,13 @@
 // Generates N daily puzzles across consecutive real dates (matching how they're
 // actually seeded in production) and dumps the raw data for offline analysis.
 // Not part of the deployed app - this folder is dev-only tooling.
+// Run with `node --experimental-strip-types analysis/generate.mjs` - the
+// generator lives in the frontend (src/game), which this script imports
+// directly as TypeScript.
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { generateDailyPuzzle } from '../server/generator.js'
+import { generateDailyPuzzle } from '../src/game/dailyGenerator.ts'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const COUNT = 10_000

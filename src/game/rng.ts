@@ -1,4 +1,4 @@
-export function seedFromString(str) {
+export function seedFromString(str: string): number {
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     hash = (Math.imul(31, hash) + str.charCodeAt(i)) | 0
@@ -6,7 +6,7 @@ export function seedFromString(str) {
   return hash
 }
 
-export function mulberry32(seed) {
+export function mulberry32(seed: number): () => number {
   let a = seed
   return () => {
     a |= 0
