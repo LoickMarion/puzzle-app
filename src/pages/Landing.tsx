@@ -26,6 +26,12 @@ export default function Landing() {
             One puzzle, shared by everyone, based on today's date.
           </span>
         </Link>
+        <Link to="/archive" className={cardClass}>
+          <span className="font-medium">Daily Archive</span>
+          <span className="text-sm text-neutral-500 dark:text-neutral-400">
+            Pick a date and replay any past daily puzzle.
+          </span>
+        </Link>
       </div>
     </main>
   )
