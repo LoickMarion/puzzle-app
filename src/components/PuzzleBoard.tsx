@@ -3,8 +3,11 @@ import { getFoundCount, recordSolution } from '../lib/foundSolutions'
 import {
   clampCoord,
   evaluateBoard,
+  findClearPosition,
   getCellEdges,
   getSolutionFingerprint,
+  maxPieceX,
+  maxPieceY,
   pieceCoveredCells,
   pieceCoveredCellsKey,
   relativeLuminance,
@@ -14,7 +17,6 @@ import {
 import type { PieceState } from '../game/types'
 import Controls from './Controls'
 
-const MIN_CELL = 14
 const MAX_CELL = 46
 
 interface PuzzleBoardProps {
@@ -53,10 +55,12 @@ export default function PuzzleBoard({
 
   const gridWidth = boardWidth + margin * 2
   const gridHeight = boardHeight + margin * 2
+  // Every piece is at most `margin` cells wide/tall, so anchoring a piece's
+  // top-left corner at -margin always keeps its far edge within the canvas -
+  // but the *max* a piece can sit at depends on that piece's own size (a
+  // bigger piece needs a smaller max, or its far edge runs off the canvas).
   const minX = -margin
-  const maxX = boardWidth - 1 + margin
   const minY = -margin
-  const maxY = boardHeight - 1 + margin
 
   const containerRef = useRef<HTMLDivElement | null>(null)
   // Mirrors `cellSize` for the drag listeners below, which are set up once per
@@ -73,8 +77,11 @@ export default function PuzzleBoard({
       const entry = entries[0]
       if (!entry) return
       const { width, height } = entry.contentRect
+      // Only cap the upper bound - never force cells bigger than what actually
+      // fits, or the canvas overflows its container (and, on a short viewport,
+      // can render behind the controls below it).
       const size = Math.floor(Math.min(width / gridWidth, height / gridHeight))
-      setCellSize(Math.max(MIN_CELL, Math.min(MAX_CELL, size)))
+      setCellSize(Math.max(1, Math.min(MAX_CELL, size)))
     })
     observer.observe(el)
     return () => observer.disconnect()
@@ -102,14 +109,15 @@ export default function PuzzleBoard({
   const movePiece = useCallback(
     (id: number, dx: number, dy: number) => {
       setPieces((prev) =>
-        prev.map((p) =>
-          p.id === id && !p.locked
-            ? { ...p, x: clampCoord(p.x + dx, minX, maxX), y: clampCoord(p.y + dy, minY, maxY) }
-            : p,
-        ),
+        prev.map((p) => {
+          if (p.id !== id || p.locked) return p
+          const maxX = maxPieceX(p.shape[0].length, boardWidth, margin)
+          const maxY = maxPieceY(p.shape.length, boardHeight, margin)
+          return { ...p, x: clampCoord(p.x + dx, minX, maxX), y: clampCoord(p.y + dy, minY, maxY) }
+        }),
       )
     },
-    [minX, maxX, minY, maxY],
+    [minX, minY, boardWidth, boardHeight, margin],
   )
 
   const rotatePiece = useCallback((id: number, direction: 'cw' | 'ccw') => {
@@ -155,15 +163,16 @@ export default function PuzzleBoard({
         if (p.locked) return p
         const inTheWay = pieceCoveredCells(p, boardWidth, boardHeight).some((cell) => targetCells.has(cell))
         if (!inTheWay) return p
-        return {
-          ...p,
-          x: Math.floor(Math.random() * gridWidth) - margin,
-          y: Math.floor(Math.random() * gridHeight) - margin,
-        }
+        const others = prev
+          .filter((o) => o.id !== p.id && o.id !== pickId)
+          .map((o) => ({ x: o.x, y: o.y, shape: o.shape }))
+        others.push({ x: target.x, y: target.y, shape: target.shape })
+        const { x, y } = findClearPosition(p.shape[0].length, p.shape.length, boardWidth, boardHeight, margin, others)
+        return { ...p, x, y }
       }),
     )
     setSelectedId((id) => (id === pickId ? null : id))
-  }, [hintCandidateIds, solution, boardWidth, boardHeight, gridWidth, gridHeight, margin])
+  }, [hintCandidateIds, solution, boardWidth, boardHeight, margin])
 
   const reset = useCallback(() => {
     setPieces(onReset())
@@ -226,6 +235,11 @@ export default function PuzzleBoard({
       const startClientY = e.clientY
       const originX = piece.x
       const originY = piece.y
+      // A rotation keeps a piece's own bounding square the same size (only
+      // its content shifts within it), so these stay valid for the whole
+      // drag even if the piece gets rotated mid-gesture.
+      const pieceMaxX = maxPieceX(piece.shape[0].length, boardWidth, margin)
+      const pieceMaxY = maxPieceY(piece.shape.length, boardHeight, margin)
 
       const onMove = (ev: globalThis.PointerEvent) => {
         if (ev.pointerId !== pointerId) return
@@ -233,8 +247,8 @@ export default function PuzzleBoard({
         if (!size) return
         const dx = Math.round((ev.clientX - startClientX) / size)
         const dy = Math.round((ev.clientY - startClientY) / size)
-        const nextX = clampCoord(originX + dx, minX, maxX)
-        const nextY = clampCoord(originY + dy, minY, maxY)
+        const nextX = clampCoord(originX + dx, minX, pieceMaxX)
+        const nextY = clampCoord(originY + dy, minY, pieceMaxY)
         setPieces((prev) =>
           prev.map((p) =>
             p.id === piece.id && (p.x !== nextX || p.y !== nextY) ? { ...p, x: nextX, y: nextY } : p,
@@ -253,7 +267,7 @@ export default function PuzzleBoard({
       window.addEventListener('pointerup', onUp)
       window.addEventListener('pointercancel', onUp)
     },
-    [minX, maxX, minY, maxY],
+    [minX, minY, boardWidth, boardHeight, margin],
   )
 
   const selectedPiece = pieces.find((p) => p.id === selectedId) ?? null
@@ -386,6 +400,12 @@ export default function PuzzleBoard({
                             backgroundColor: piece.color,
                             pointerEvents: 'auto',
                             boxSizing: 'border-box',
+                            // Without this, a grid item's implicit auto min-size
+                            // can keep it from shrinking below its own border
+                            // width, letting cells (and the border) bleed past
+                            // the intended box on a very constrained layout.
+                            minWidth: 0,
+                            minHeight: 0,
                             // Borders only appear on a cell's true outer edges (no filled
                             // neighbor on that side) so a piece reads as one solid shape
                             // instead of a grid of separately-outlined tiles.

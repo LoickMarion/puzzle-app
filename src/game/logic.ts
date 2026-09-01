@@ -110,28 +110,143 @@ export function createShuffledPieces(): PieceState[] {
   )
 }
 
-// Applies a random rotation and a random scattered position (within `margin`
-// cells of the board on every side) to each piece - shared by Classic's fixed
-// set and Daily's generated set alike.
+// The largest x/y a piece's own top-left corner may sit at and still keep its
+// *far* edge (which depends on the piece's own width/height) within the
+// margin-extended canvas. minX/minY don't need a piece-size-aware equivalent:
+// every piece is at most `margin` cells wide/tall, so anchoring its top-left
+// corner at -margin already keeps its far edge within the board's own edge.
+export function maxPieceX(pieceWidth: number, boardWidth: number, margin: number): number {
+  return boardWidth + margin - pieceWidth
+}
+
+export function maxPieceY(pieceHeight: number, boardHeight: number, margin: number): number {
+  return boardHeight + margin - pieceHeight
+}
+
+// A random position (within `margin` cells of the board) for a piece of the
+// given size, resampled until its bounding box doesn't overlap the board at
+// all.
+function randomOffBoardPosition(
+  pieceWidth: number,
+  pieceHeight: number,
+  boardWidth: number,
+  boardHeight: number,
+  margin: number,
+): { x: number; y: number } {
+  // +1: Math.random()*range gives [0, range), so this is an inclusive max.
+  const rangeX = maxPieceX(pieceWidth, boardWidth, margin) - -margin + 1
+  const rangeY = maxPieceY(pieceHeight, boardHeight, margin) - -margin + 1
+
+  let x = -margin
+  let y = -margin
+  for (let attempt = 0; attempt < 200; attempt++) {
+    x = Math.floor(Math.random() * rangeX) - margin
+    y = Math.floor(Math.random() * rangeY) - margin
+    const overlapsBoard = x < boardWidth && x + pieceWidth > 0 && y < boardHeight && y + pieceHeight > 0
+    if (!overlapsBoard) break
+  }
+  return { x, y }
+}
+
+function rectsOverlap(
+  ax: number,
+  ay: number,
+  aw: number,
+  ah: number,
+  bx: number,
+  by: number,
+  bw: number,
+  bh: number,
+): boolean {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by
+}
+
+// A position for a piece of the given size that avoids both the board and
+// every rectangle in `others` (already-placed pieces) - used for the initial
+// scatter, and for bumping a piece that's in a hint's way somewhere clear.
+// Tries random positions first; if none land free, slides the piece straight
+// away from the board's center (along whichever axis it's already more
+// offset on); if that line is still blocked, scans the whole scatter band for
+// any fully clear spot. That last step finds one whenever one exists - only a
+// scatter band too small/full to fit every piece without overlap can still
+// return an overlapping position.
+export function findClearPosition(
+  pieceWidth: number,
+  pieceHeight: number,
+  boardWidth: number,
+  boardHeight: number,
+  margin: number,
+  others: { x: number; y: number; shape: Shape }[],
+): { x: number; y: number } {
+  const overlapsBoard = (x: number, y: number) =>
+    x < boardWidth && x + pieceWidth > 0 && y < boardHeight && y + pieceHeight > 0
+  const overlapsOthers = (x: number, y: number) =>
+    others.some((o) => rectsOverlap(x, y, pieceWidth, pieceHeight, o.x, o.y, o.shape[0].length, o.shape.length))
+  const overlapsAny = (x: number, y: number) => overlapsBoard(x, y) || overlapsOthers(x, y)
+
+  let { x, y } = randomOffBoardPosition(pieceWidth, pieceHeight, boardWidth, boardHeight, margin)
+  for (let attempt = 0; attempt < 200 && overlapsAny(x, y); attempt++) {
+    ;({ x, y } = randomOffBoardPosition(pieceWidth, pieceHeight, boardWidth, boardHeight, margin))
+  }
+
+  const maxX = maxPieceX(pieceWidth, boardWidth, margin)
+  const maxY = maxPieceY(pieceHeight, boardHeight, margin)
+
+  if (overlapsAny(x, y)) {
+    const dx = x + pieceWidth / 2 - boardWidth / 2
+    const dy = y + pieceHeight / 2 - boardHeight / 2
+    const horizontal = Math.abs(dx) >= Math.abs(dy)
+    const stepX = horizontal ? Math.sign(dx) || 1 : 0
+    const stepY = horizontal ? 0 : Math.sign(dy) || 1
+    const maxSteps = boardWidth + boardHeight + margin * 2
+    for (let i = 0; i < maxSteps && overlapsAny(x, y); i++) {
+      x = clampCoord(x + stepX, -margin, maxX)
+      y = clampCoord(y + stepY, -margin, maxY)
+    }
+  }
+
+  // Sliding along one axis can still land in another piece's way. Fall back
+  // to scanning the whole scatter band for any fully clear spot - guaranteed
+  // to find one if one exists anywhere, not just along that one line.
+  if (overlapsAny(x, y)) {
+    outer: for (let ty = -margin; ty <= maxY; ty++) {
+      for (let tx = -margin; tx <= maxX; tx++) {
+        if (!overlapsAny(tx, ty)) {
+          x = tx
+          y = ty
+          break outer
+        }
+      }
+    }
+  }
+
+  return { x, y }
+}
+
+// Applies a random rotation and a scattered, mutually non-overlapping
+// position to each piece (best effort - see findClearPosition) - shared by
+// Classic's fixed set and Daily's generated set alike.
 export function scatterPieces(
   pieces: { id: number; color: string; shape: Shape }[],
   boardWidth: number,
   boardHeight: number,
   margin: number,
 ): PieceState[] {
-  const gridWidth = boardWidth + margin * 2
-  const gridHeight = boardHeight + margin * 2
+  const placed: { x: number; y: number; shape: Shape }[] = []
   return pieces.map((piece) => {
     let shape = piece.shape
     const rotations = Math.floor(Math.random() * 4)
     for (let r = 0; r < rotations; r++) shape = rotateCW(shape)
 
+    const { x, y } = findClearPosition(shape[0].length, shape.length, boardWidth, boardHeight, margin, placed)
+    placed.push({ x, y, shape })
+
     return {
       id: piece.id,
       color: piece.color,
       shape,
-      x: Math.floor(Math.random() * gridWidth) - margin,
-      y: Math.floor(Math.random() * gridHeight) - margin,
+      x,
+      y,
     }
   })
 }
