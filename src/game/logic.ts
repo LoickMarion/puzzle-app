@@ -204,3 +204,34 @@ export function getSolutionFingerprint(pieces: PieceState[], boardWidth: number)
     })
     .join('|')
 }
+
+// Absolute board cells a piece currently covers - cells that fall outside the
+// board (scattered pieces, or an in-progress drag) are excluded, since a
+// piece hanging off the edge covers nothing ON the board. Used both to check
+// whether a piece already sits in its correct (hint-target) spot, and to
+// detect when some other piece is in the way of a hint about to land.
+export function pieceCoveredCells(
+  piece: { shape: Shape; x: number; y: number },
+  boardWidth: number,
+  boardHeight: number,
+): number[] {
+  const cells: number[] = []
+  for (let j = 0; j < piece.shape.length; j++) {
+    for (let i = 0; i < piece.shape[j].length; i++) {
+      if (!piece.shape[j][i]) continue
+      const boardX = piece.x + i
+      const boardY = piece.y + j
+      if (boardX < 0 || boardX >= boardWidth || boardY < 0 || boardY >= boardHeight) continue
+      cells.push(boardY * boardWidth + boardX)
+    }
+  }
+  return cells.sort((a, b) => a - b)
+}
+
+export function pieceCoveredCellsKey(
+  piece: { shape: Shape; x: number; y: number },
+  boardWidth: number,
+  boardHeight: number,
+): string {
+  return pieceCoveredCells(piece, boardWidth, boardHeight).join(',')
+}

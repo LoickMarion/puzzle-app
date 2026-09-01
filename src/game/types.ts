@@ -12,4 +12,7 @@ export interface PieceState {
   shape: Shape
   x: number
   y: number
+  // Set by a hint: the piece is shown in its correct spot and can no longer
+  // be selected, dragged, or rotated until the board is reset.
+  locked?: boolean
 }

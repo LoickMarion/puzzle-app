@@ -68,6 +68,12 @@ export default function DailyPuzzlePlayer({ date, title }: DailyPuzzlePlayerProp
   const { width, height } = data.board
   const basePieces = data.pieces.map((p) => ({ id: p.id, color: p.color, shape: shapeFromCells(p.cells) }))
   const makePieces = () => scatterPieces(basePieces, width, height, MARGIN)
+  const solution = data.pieces.map((p) => {
+    const shape = shapeFromCells(p.cells)
+    const x = Math.min(...p.cells.map(([, c]) => c))
+    const y = Math.min(...p.cells.map(([r]) => r))
+    return { id: p.id, color: p.color, shape, x, y }
+  })
 
   return (
     <PuzzleBoard
@@ -76,6 +82,7 @@ export default function DailyPuzzlePlayer({ date, title }: DailyPuzzlePlayerProp
       margin={MARGIN}
       createInitialPieces={makePieces}
       onReset={makePieces}
+      solution={solution}
       title={title}
       subtitle={`Puzzle for ${date}. Drag every piece onto the board so it's fully covered with no overlaps.`}
       resetLabel="Reset"

@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { getFoundCount, recordSolution } from '../lib/foundSolutions'
 import {
   clampCoord,
   evaluateBoard,
   getCellEdges,
   getSolutionFingerprint,
+  pieceCoveredCells,
+  pieceCoveredCellsKey,
   relativeLuminance,
   rotateCCW,
   rotateCW,
@@ -28,6 +30,9 @@ interface PuzzleBoardProps {
   // sense against a fixed, stable piece set, so Daily's generated puzzles
   // just get a plain "solved" banner instead.
   trackSolutions?: boolean
+  // Each piece's correct {shape, x, y}. When provided, a Hint button appears
+  // that drops one not-yet-correct, unlocked piece into place and locks it.
+  solution?: PieceState[]
 }
 
 export default function PuzzleBoard({
@@ -40,6 +45,7 @@ export default function PuzzleBoard({
   createInitialPieces,
   onReset,
   trackSolutions = false,
+  solution,
 }: PuzzleBoardProps) {
   const [pieces, setPieces] = useState<PieceState[]>(createInitialPieces)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -97,7 +103,7 @@ export default function PuzzleBoard({
     (id: number, dx: number, dy: number) => {
       setPieces((prev) =>
         prev.map((p) =>
-          p.id === id
+          p.id === id && !p.locked
             ? { ...p, x: clampCoord(p.x + dx, minX, maxX), y: clampCoord(p.y + dy, minY, maxY) }
             : p,
         ),
@@ -109,10 +115,55 @@ export default function PuzzleBoard({
   const rotatePiece = useCallback((id: number, direction: 'cw' | 'ccw') => {
     setPieces((prev) =>
       prev.map((p) =>
-        p.id === id ? { ...p, shape: direction === 'cw' ? rotateCW(p.shape) : rotateCCW(p.shape) } : p,
+        p.id === id && !p.locked ? { ...p, shape: direction === 'cw' ? rotateCW(p.shape) : rotateCCW(p.shape) } : p,
       ),
     )
   }, [])
+
+  // Reveals one not-yet-correct, unlocked piece in its solved spot and locks
+  // it there. Skips pieces the player has already gotten right themselves, so
+  // every hint makes visible progress.
+  const hintCandidateIds = useMemo(
+    () =>
+      solution
+        ? pieces
+            .filter((p) => !p.locked)
+            .filter((p) => {
+              const target = solution.find((s) => s.id === p.id)
+              return (
+                target != null &&
+                pieceCoveredCellsKey(p, boardWidth, boardHeight) !== pieceCoveredCellsKey(target, boardWidth, boardHeight)
+              )
+            })
+            .map((p) => p.id)
+        : [],
+    [pieces, solution, boardWidth, boardHeight],
+  )
+
+  const hint = useCallback(() => {
+    if (hintCandidateIds.length === 0) return
+    const pickId = hintCandidateIds[Math.floor(Math.random() * hintCandidateIds.length)]
+    const target = solution?.find((s) => s.id === pickId)
+    if (!target) return
+    const targetCells = new Set(pieceCoveredCells(target, boardWidth, boardHeight))
+
+    setPieces((prev) =>
+      prev.map((p) => {
+        if (p.id === pickId) return { ...p, shape: target.shape, x: target.x, y: target.y, locked: true }
+        // Bump any other loose piece out of the way if it's sitting on the
+        // cells this hint is about to occupy, so the two don't visibly overlap.
+        if (p.locked) return p
+        const inTheWay = pieceCoveredCells(p, boardWidth, boardHeight).some((cell) => targetCells.has(cell))
+        if (!inTheWay) return p
+        return {
+          ...p,
+          x: Math.floor(Math.random() * gridWidth) - margin,
+          y: Math.floor(Math.random() * gridHeight) - margin,
+        }
+      }),
+    )
+    setSelectedId((id) => (id === pickId ? null : id))
+  }, [hintCandidateIds, solution, boardWidth, boardHeight, gridWidth, gridHeight, margin])
 
   const reset = useCallback(() => {
     setPieces(onReset())
@@ -166,6 +217,7 @@ export default function PuzzleBoard({
   // listeners sidestep this: they don't care what DOM churn happens underneath.
   const handlePieceDown = useCallback(
     (piece: PieceState) => (e: PointerEvent<HTMLDivElement>) => {
+      if (piece.locked) return
       e.stopPropagation()
       setSelectedId(piece.id)
 
@@ -220,6 +272,16 @@ export default function PuzzleBoard({
             <span className="text-sm text-neutral-500 dark:text-neutral-400">
               Solutions found: <span className="font-semibold text-neutral-900 dark:text-neutral-100">{foundCount}</span>
             </span>
+          )}
+          {solution && (
+            <button
+              type="button"
+              onClick={hint}
+              disabled={hintCandidateIds.length === 0}
+              className="rounded-lg bg-neutral-200 px-3 py-2 text-sm font-medium text-neutral-900 disabled:opacity-30 active:bg-neutral-300 dark:bg-neutral-800 dark:text-neutral-100 dark:active:bg-neutral-700"
+            >
+              {hintCandidateIds.length === 0 ? 'No hints left' : 'Hint'}
+            </button>
           )}
           <button
             type="button"
@@ -276,14 +338,18 @@ export default function PuzzleBoard({
               const isSelected = piece.id === selectedId
               const hasOverflow = overflowIds.has(piece.id)
               // A border that contrasts with the piece's own fill, so the outline
-              // reads clearly whether the piece is pale or near-black.
-              const borderColor = isSelected
-                ? '#ffffff'
-                : hasOverflow
-                  ? '#f87171'
-                  : relativeLuminance(piece.color) > 0.5
-                    ? 'rgba(0,0,0,0.6)'
-                    : 'rgba(255,255,255,0.7)'
+              // reads clearly whether the piece is pale or near-black. Locked
+              // pieces always get the same gold ring, regardless of selection,
+              // so "hinted and locked" reads as its own distinct state.
+              const borderColor = piece.locked
+                ? '#facc15'
+                : isSelected
+                  ? '#ffffff'
+                  : hasOverflow
+                    ? '#f87171'
+                    : relativeLuminance(piece.color) > 0.5
+                      ? 'rgba(0,0,0,0.6)'
+                      : 'rgba(255,255,255,0.7)'
               const borderWidth = isSelected ? 3 : 2
               const pieceRows = piece.shape.length
               const pieceCols = piece.shape[0].length
@@ -311,7 +377,11 @@ export default function PuzzleBoard({
                         <div
                           key={`${i}-${j}`}
                           onPointerDown={handlePieceDown(piece)}
-                          className="cursor-grab touch-none active:cursor-grabbing"
+                          className={
+                            piece.locked
+                              ? 'cursor-default touch-none'
+                              : 'cursor-grab touch-none active:cursor-grabbing'
+                          }
                           style={{
                             backgroundColor: piece.color,
                             pointerEvents: 'auto',
